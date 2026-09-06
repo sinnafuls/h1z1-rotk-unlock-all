@@ -53,8 +53,11 @@ another definition of the same family. A choice is applied in three places:
 - **The definition lookup.** A prototype with a choice resolves to the
   chosen output definition, so the stowed model, HUD and inventory agree
   with the in-match draw.
-- **The local player's attachments.** The server's equipment packet no
-  longer replaces the client-built attachments for the local player.
+- **The local player's attachments.** In both equipment packet handlers
+  (the full set at spawn, and draw / holster / single-slot changes) the
+  server's standard models no longer replace the attachments the client
+  built from the translated items. In a match a skin applies to the item of
+  that category you are actually wearing or holding.
 
 The cosmetics grid decides the lock badge by joining every prototype x skin
 pair against the account-item data source, which holds one row per item the

@@ -4,8 +4,9 @@
 use std::sync::LazyLock;
 
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::Memory::{VirtualProtect, PAGE_EXECUTE_READWRITE};
 
-use crate::offsets::Site;
+use crate::offsets::{Patch, Site};
 
 static BASE: LazyLock<usize> = LazyLock::new(|| unsafe { GetModuleHandleW(std::ptr::null()) as usize });
 
@@ -44,4 +45,27 @@ pub unsafe fn mismatch(site: &Site) -> Option<Vec<u8>> {
     } else {
         Some(got.to_vec())
     }
+}
+
+/// Writes a patch over its original bytes.
+pub unsafe fn apply_patch(patch: &Patch) -> Result<(), String> {
+    let addr = va(patch.rva);
+    let len = patch.original.len();
+    let current = std::slice::from_raw_parts(addr as *const u8, len);
+    if current == patch.patched {
+        return Ok(());
+    }
+    if current != patch.original {
+        return Err(format!(
+            "{}: bytes at {:#x} are {:02X?}, expected {:02X?}",
+            patch.name, patch.rva, current, patch.original
+        ));
+    }
+    let mut previous = 0;
+    if VirtualProtect(addr as *const _, len, PAGE_EXECUTE_READWRITE, &mut previous) == 0 {
+        return Err(format!("{}: VirtualProtect failed", patch.name));
+    }
+    std::ptr::copy_nonoverlapping(patch.patched.as_ptr(), addr as *mut u8, len);
+    VirtualProtect(addr as *const _, len, previous, &mut previous);
+    Ok(())
 }

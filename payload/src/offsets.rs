@@ -10,6 +10,15 @@ pub struct Site {
     pub head: &'static [u8],
 }
 
+/// A code patch: the bytes the supported build has at the site, and their
+/// replacement. Applied only when the original bytes are present.
+pub struct Patch {
+    pub name: &'static str,
+    pub rva: usize,
+    pub original: &'static [u8],
+    pub patched: &'static [u8],
+}
+
 // ---- hooked -------------------------------------------------------------------
 
 /// `AccountItemManager::IsOwned(mgr, &itemId)`: the equip gate and the
@@ -55,21 +64,28 @@ pub const COLL_INSERT: Site = Site {
     head: &[0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C],
 };
 
-/// `ClientCharacterEquipmentManager::UpdateProxiedCharacterAttachments(mgr,
-/// &playerId, ...)`: applies the server's attachment data for every slot of
-/// an equipment packet.
-pub const UPD_PROXIED_MANY: Site = Site {
-    name: "UpdateProxiedCharacterAttachments",
-    rva: 0x10F1BF0,
-    head: &[0x48, 0x8B, 0xC4, 0x55, 0x41, 0x56, 0x41, 0x57],
+/// In `HandleEquipmentPacketSetCharacterEquipmentSlots` (draw, holster, a
+/// single slot change), the local player's
+/// branch builds its attachments from the items and then hands the packet's
+/// attachment data to `UpdateProxiedCharacterAttachments`, which replaces
+/// them with the server's standard models. The `mov rax, inventory` that
+/// starts that call's argument setup becomes a jump over the call.
+pub const DRAW_PATCH: Patch = Patch {
+    name: "SetCharacterEquipmentSlots draw",
+    rva: 0x10ED6FC,
+    original: &[0x48, 0x8B, 0x05, 0x35, 0x08, 0x68, 0x03],
+    patched: &[0xEB, 0x3F, 0x90, 0x90, 0x90, 0x90, 0x90],
 };
 
-/// `ClientCharacterEquipmentManager::UpdateProxiedCharacterAttachment(mgr,
-/// &playerId, record, attachmentData)`: the single-slot variant.
-pub const UPD_PROXIED_ONE: Site = Site {
-    name: "UpdateProxiedCharacterAttachment",
-    rva: 0x10F1A30,
-    head: &[0x48, 0x89, 0x5C, 0x24, 0x18, 0x48, 0x89, 0x74],
+/// `HandleEquipmentPacketSetCharacterEquipment` (the full set at match
+/// start) ends its local branch the same way: `SetEquippedItem` per slot
+/// from the items, then the packet's attachment data to
+/// `UpdateProxiedCharacterAttachments`. That call becomes five NOPs.
+pub const EQUIP_PATCH: Patch = Patch {
+    name: "SetCharacterEquipment draw",
+    rva: 0x10ECF4E,
+    original: &[0xE8, 0x84, 0xAC, 0xF4, 0xFE],
+    patched: &[0x90, 0x90, 0x90, 0x90, 0x90],
 };
 
 /// The account-item data source's populate: `(source, force)`. One row per
@@ -148,9 +164,8 @@ pub const ITEM_DEFS: usize = 0x476E418;
 /// The client object; `+CLIENT_IN_ZONE == 4` while in a zone.
 pub const CLIENT_SLOT: usize = 0x476DC08;
 pub const CLIENT_IN_ZONE: usize = 0x389DC;
-/// The inventory object; `+INVENTORY_LOCAL_GUID` is the local character's guid.
+/// The inventory object.
 pub const INVENTORY: usize = 0x476DF38;
-pub const INVENTORY_LOCAL_GUID: usize = 0xD8;
 /// The account-item manager inside the inventory, and its UiDb data source.
 pub const ACCT_MGR_OFF: usize = 0xE8B0;
 pub const ACCT_SOURCE_OFF: usize = 0x8A0;
@@ -161,8 +176,7 @@ pub const UI_COLLECTIONS: usize = 0x476DD38;
 /// prototype id -> skin item id (node: key, value, next at `+32`).
 pub const SKIN_MGR: usize = 0x476DE38;
 pub const SKIN_MGR_FAMILY_MAP: usize = 0x8E0;
-/// The local player id and the collection-version threshold the refreshers test.
-pub const LOCAL_PLAYER_ID: usize = 0x478FDB0;
+/// The collection-version threshold the refreshers test.
 pub const COLL_VERSION: usize = 0x4798958;
 /// The current skin collection id.
 pub const CURRENT_COLLECTION: usize = 0x4446688;

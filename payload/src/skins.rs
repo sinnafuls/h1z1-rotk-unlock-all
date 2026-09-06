@@ -9,8 +9,9 @@
 //!   the same refreshers;
 //! - the definition lookup translates a prototype with a choice to the
 //!   chosen output definition, so the stowed model, HUD and inventory agree;
-//! - the local player's attachments are left as the client built them
-//!   instead of being replaced by the server's equipment packet.
+//! - in both equipment packet handlers the local player's attachments are
+//!   left as the client built them instead of being replaced by the
+//!   server's standard models.
 //!
 //! Choices persist in the store and are re-applied after every server
 //! rebuild of the collection. Nothing is sent to the server.
@@ -31,8 +32,6 @@ type FnDefById = unsafe extern "C" fn(usize, u32) -> usize;
 type FnUiSet = unsafe extern "C" fn(usize, *const u32, *const u32, *const u32) -> u8;
 type FnUiPreview = unsafe extern "C" fn(usize, *const u32) -> usize;
 type FnCollInsert = unsafe extern "C" fn(usize, *const u32, *mut CollEntry, u8) -> usize;
-type FnUpdMany = unsafe extern "C" fn(usize, *const u64, usize, usize, usize, u8, u8, u8) -> usize;
-type FnUpdOne = unsafe extern "C" fn(usize, *const u64, usize, usize) -> usize;
 type FnZoneDone = unsafe extern "C" fn(usize) -> usize;
 type FnRefresh = unsafe extern "C" fn(usize) -> usize;
 type FnRefreshCur = unsafe extern "C" fn(usize, *const u32) -> usize;
@@ -57,8 +56,6 @@ static DEF_BY_ID: OnceLock<GenericDetour<FnDefById>> = OnceLock::new();
 static UI_SET: OnceLock<GenericDetour<FnUiSet>> = OnceLock::new();
 static UI_PREVIEW: OnceLock<GenericDetour<FnUiPreview>> = OnceLock::new();
 static COLL_INSERT: OnceLock<GenericDetour<FnCollInsert>> = OnceLock::new();
-static UPD_MANY: OnceLock<GenericDetour<FnUpdMany>> = OnceLock::new();
-static UPD_ONE: OnceLock<GenericDetour<FnUpdOne>> = OnceLock::new();
 static ZONE_DONE: OnceLock<GenericDetour<FnZoneDone>> = OnceLock::new();
 
 pub unsafe fn install() -> Result<(), String> {
@@ -67,9 +64,11 @@ pub unsafe fn install() -> Result<(), String> {
     hook!(UI_SET, offsets::UI_SET_BY_ITEM, FnUiSet, hk_ui_set);
     hook!(UI_PREVIEW, offsets::UI_PREVIEW_SKIN, FnUiPreview, hk_ui_preview);
     hook!(COLL_INSERT, offsets::COLL_INSERT, FnCollInsert, hk_coll_insert);
-    hook!(UPD_MANY, offsets::UPD_PROXIED_MANY, FnUpdMany, hk_upd_many);
-    hook!(UPD_ONE, offsets::UPD_PROXIED_ONE, FnUpdOne, hk_upd_one);
     hook!(ZONE_DONE, offsets::ZONE_DONE, FnZoneDone, hk_zone_done);
+    for patch in [&offsets::DRAW_PATCH, &offsets::EQUIP_PATCH] {
+        crate::process::apply_patch(patch)?;
+        logf!("patched {} at {:#x}", patch.name, patch.rva);
+    }
     install_def_by_id()
 }
 
@@ -114,38 +113,6 @@ unsafe extern "C" fn hk_coll_insert(collections: usize, collection: *const u32, 
         }
     }
     COLL_INSERT.get().unwrap().call(collections, collection, entry, in_zone)
-}
-
-unsafe fn is_local_player(id: *const u64) -> bool {
-    let Some(&id) = id.as_ref() else { return false };
-    if id == rd_u64(va(offsets::LOCAL_PLAYER_ID)) {
-        return true;
-    }
-    let inventory = rd_u64(va(offsets::INVENTORY));
-    user_ptr(inventory) && id == rd_u64(inventory as usize + offsets::INVENTORY_LOCAL_GUID)
-}
-
-unsafe extern "C" fn hk_upd_many(
-    mgr: usize,
-    id: *const u64,
-    unequip: usize,
-    state: usize,
-    list: usize,
-    a: u8,
-    b: u8,
-    c: u8,
-) -> usize {
-    if is_local_player(id) {
-        return 0;
-    }
-    UPD_MANY.get().unwrap().call(mgr, id, unequip, state, list, a, b, c)
-}
-
-unsafe extern "C" fn hk_upd_one(mgr: usize, id: *const u64, record: usize, data: usize) -> usize {
-    if is_local_player(id) {
-        return 0;
-    }
-    UPD_ONE.get().unwrap().call(mgr, id, record, data)
 }
 
 /// The equip path: the local apply, then the preview the original ends with.
